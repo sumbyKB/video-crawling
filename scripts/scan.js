@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+const fs = require('fs');
+const path = require('path');
 // TikTok creator recent videos scanner v2
 // Connects to dedicated Chrome on port 9223, intercepts /api/post/item_list,
 // collects recent N videos with full stats + pinned status + profile-level metrics.
@@ -37,8 +39,8 @@ function normalizeHandle(raw) {
   s = s.replace(/\/video\/.*$/i, '').replace(/\/+$/, '');
   s = s.replace(/^@/, '');
   s = s.split('/')[0];
-  // TikTok handles are 2-30 chars and never end with a dot or underscore
-  if (!/^[A-Za-z0-9._]{1,29}[A-Za-z0-9]$/.test(s)) return null;
+  // TikTok handles are 2-30 chars; cannot end with a dot (underscore IS legal, e.g. ruffiedufie_)
+  if (!/^[A-Za-z0-9._]{1,29}[A-Za-z0-9_]$/.test(s)) return null;
   return s.toLowerCase();
 }
 
@@ -100,6 +102,10 @@ async function main() {
   }
   const tid = cr.result.targetId;
   const at = await send('Target.attachToTarget', { targetId: tid, flatten: true });
+  if (!at.result || !at.result.sessionId) {
+    await send('Target.closeTarget', { targetId: tid }).catch(() => {});
+    fail(handle, 'CREATE_TARGET_FAILED', JSON.stringify(at).slice(0, 200));
+  }
   const sid = at.result.sessionId;
 
   await send('Network.enable', { maxTotalBufferSize: 30000000 }, sid).catch(() => {});
@@ -145,7 +151,7 @@ async function main() {
   }
   if (!loaded) {
     await send('Target.closeTarget', { targetId: tid }).catch(() => {});
-    fail(handle, sawCaptcha ? 'NAV_FAILED_OR_CAPTCHA' : 'NAV_FAILED_OR_CAPTCHA',
+    fail(handle, 'NAV_FAILED_OR_CAPTCHA',
       sawCaptcha ? 'slider captcha shown' : 'profile page did not load after retries',
       sawCaptcha ? '在专用 Chrome 中手动打开该主页完成人机验证后回来重跑' : '检查该主页能否在专用 Chrome 正常打开；msToken 过期时先刷新任意达人主页');
   }

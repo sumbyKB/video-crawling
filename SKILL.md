@@ -67,7 +67,7 @@ powershell.exe -NoProfile -Command '$sd="$env:USERPROFILE\.workbuddy\skills\vide
 
 ### 3. 抓取并留档（--out 直写档案，成功判据看 stdout）
 ```bash
-TS=$(node -e "console.log(new Date(Date.now()+8*3600e3).toISOString().slice(0,16).replace('T','-').replace(':',''))")
+TS=$(node -e "console.log(new Date(Date.now()+8*3600e3).toISOString().slice(0,16).replace(/[-:]/g,'').replace('T','-'))")
 node $SKILL_DIR/scripts/scan.js <handle> [条数] --out "$SKILL_DIR/data/scans/<handle>/$TS.json"
 ```
 - `--out` 模式下：**成功**时脚本自己把完整 JSON 写进档案（父目录自动创建），stdout 只输出 `{"ok":true,"archive":...,"videos":N,...}` 小标记；**失败**时 stdout 是带 `error` 字段的 JSON，且**档案路径不会产生任何文件**（不会留半截档案），按「失败处理」表的 error 码行动
