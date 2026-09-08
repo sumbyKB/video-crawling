@@ -26,6 +26,7 @@ description_zh: 抓取 TikTok 达人近期视频数据（播放量、点赞、�
 - Node.js 22+（`scan.js` 依赖全局 `WebSocket`，旧版会报 FATAL；装了新版 Claude Code / WorkBuddy 一般就满足）
 - Google Chrome（启动器自动探测安装路径，探测不到才问一次并记住）
 - 专用 Chrome（9223 端口、独立 profile，与日常浏览器隔离）——**缺失时由本 skill 自动拉起**，见标准流程第 2 步；macOS/Linux 用 `start-tiktok-chrome.sh`
+- 标准流程已做成**沙箱友好**：抓取归档走 `scan.js --out`（脚本内部建目录写文件），不依赖 `/tmp`、`mkdir`、重定向——在精简 bash（如 WorkBuddy 沙箱，无 `/tmp`、`mkdir` 可能缺失）也能原样跑通
 
 ## 路径常量（自适应两个 agent）
 
@@ -64,17 +65,15 @@ powershell.exe -NoProfile -Command '$sd="$env:USERPROFILE\.workbuddy\skills\vide
 然后轮询最多 6 次（每次 sleep 5 秒后再跑一次端口检查），任一次输出 `OK` 即继续。
 6 次后仍 `DOWN` 才降级为人工提示：「请双击 `$SKILL_DIR/`（上方解析结果，WorkBuddy 在 .workbuddy\skills\videocrawling\，Claude Code 在 .claude\skills\videocrawling\）里的 start-tiktok-chrome.bat」
 
-### 3. 抓取并留档（临时文件 → 验错 → 归档）
+### 3. 抓取并留档（--out 直写档案，成功判据看 stdout）
 ```bash
-node $SKILL_DIR/scripts/scan.js <handle> [条数] > /tmp/scan-tmp.json 2>/tmp/scan-log.txt
-grep -q '"videos"' /tmp/scan-tmp.json || { cat /tmp/scan-log.txt /tmp/scan-tmp.json; 按「失败处理」表的 error 码行动; }
+TS=$(node -e "console.log(new Date(Date.now()+8*3600e3).toISOString().slice(0,16).replace('T','-').replace(':',''))")
+node $SKILL_DIR/scripts/scan.js <handle> [条数] --out "$SKILL_DIR/data/scans/<handle>/$TS.json"
 ```
-成功（输出含 `"videos"` 字段；错误对象没有它）才归档：
-```bash
-mkdir -p "$SKILL_DIR/data/scans/<handle>"
-mv /tmp/scan-tmp.json "$SKILL_DIR/data/scans/<handle>/<YYYYMMDD-HHMM>.json"
-```
-时间戳用当下时刻。**每次成功抓取都必须归档，先归档再渲染输出。**
+- `--out` 模式下：**成功**时脚本自己把完整 JSON 写进档案（父目录自动创建），stdout 只输出 `{"ok":true,"archive":...,"videos":N,...}` 小标记；**失败**时 stdout 是带 `error` 字段的 JSON，且**档案路径不会产生任何文件**（不会留半截档案），按「失败处理」表的 error 码行动
+- 时间戳用上面的 node 一行式（UTC+8），不要用 shell 重定向到 /tmp——部分沙箱没有 /tmp、没有 mkdir
+- **每次成功抓取都必须归档（--out 已自动完成），先归档再渲染输出**
+- 需要拿完整数据渲染表格时直接读档案文件，或去掉 `--out` 走旧式 stdout 输出
 
 ### 4. 增量对比（有历史档案时自动做）
 ```bash
@@ -173,5 +172,9 @@ warningCode `PARTIAL_COUNT(got:X,wanted:Y)` 不是失败：照常输出实有的
 
 ## 参考文件（References）
 
-- `references/schema.md` — 归档 JSON v2 完整字段口径（含与下游 tiktok-account-audit 的字段对齐说明）、compare.js / to-csv.js 的输出结构
+- `references/schema.md` — 归档 JSON v2 完整字段口径（含与下游 tiktok-account-audit 的字段对齐说明）、compare.js / to-csv.js 的输出结构、`scan.js --out` 模式说明
 - `references/troubleshooting.md` — 错误码详解、安装与运行 FAQ、9223 端口排查
+
+## 更新日志
+
+- **2026-09-08 v2.1**：`scan.js` 新增 `--out` 直写档案模式（沙箱友好，不依赖 /tmp 与 mkdir，失败不落半截档案）；stats 五项指标改为显式 null（不再静默丢键）；handle 校验收紧（末尾不能是 `.`/`_`）；`attachToTarget` 失败显式报错；`compare.js` 样本数口径改为实有条数（PARTIAL_COUNT 安全）、总量对比跳过两侧皆缺失的指标、rank 缺失时兜底序号。

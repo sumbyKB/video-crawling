@@ -3,15 +3,20 @@
 // Connects to dedicated Chrome on port 9223, intercepts /api/post/item_list,
 // collects recent N videos with full stats + pinned status + profile-level metrics.
 //
-// Usage: node scan.js <handle-or-url> [count]
+// Usage: node scan.js <handle-or-url> [count] [--out <archive-path>]
 //   count defaults to 20.
+//   --out: write the success payload directly to the archive file
+//     (parent dirs auto-created). stdout then only carries a small
+//     {"ok":true,...} marker; on failure the error JSON goes to stdout
+//     and NOTHING is written to the archive path.
+//     Without --out, the full JSON goes to stdout (legacy behavior).
 // Output: JSON v2 to stdout, logs to stderr. Exit code is always 0;
 // consumers detect failure by reading the "error" field.
 //
 // Structured error codes (see SKILL.md failure table):
 //   INVALID_HANDLE               - could not parse handle from input
 //   CHROME_NOT_REACHABLE         - port 9223 down / Chrome dead -> auto-launch flow
-//   CREATE_TARGET_FAILED         - CDP refused tab creation
+//   CREATE_TARGET_FAILED         - CDP refused tab creation or target attach
 //   NAV_FAILED_OR_CAPTCHA        - page never loaded, or slider captcha detected
 //   EMPTY_RESULT_LIKELY_MS_TOKEN - page loaded but zero items captured
 // Success payload carries warningCode PARTIAL_COUNT when fewer than requested.
@@ -32,11 +37,16 @@ function normalizeHandle(raw) {
   s = s.replace(/\/video\/.*$/i, '').replace(/\/+$/, '');
   s = s.replace(/^@/, '');
   s = s.split('/')[0];
-  if (!/^[A-Za-z0-9._]{1,30}$/.test(s)) return null;
+  // TikTok handles are 2-30 chars and never end with a dot or underscore
+  if (!/^[A-Za-z0-9._]{1,29}[A-Za-z0-9]$/.test(s)) return null;
   return s.toLowerCase();
 }
 
 async function main() {
+  // --out <path>: archive directly from inside the script (no shell redirect,
+  // no mkdir dependency — survives minimal bash sandboxes without /tmp)
+  const outIdx = process.argv.indexOf('--out');
+  const outPath = (outIdx > 0 && process.argv[outIdx + 1]) ? process.argv[outIdx + 1] : null;
   const handle = normalizeHandle(process.argv[2]);
   const requestedCountRaw = parseInt(process.argv[3], 10);
   const requestedCount = Number.isFinite(requestedCountRaw) && requestedCountRaw > 0 ? Math.min(requestedCountRaw, 200) : 20;
@@ -52,7 +62,7 @@ async function main() {
     if (!resp.ok) throw new Error(`http ${resp.status}`);
     ver = await resp.json();
   } catch (e) {
-    fail(handle, 'CHROME_NOT_REACHABLE', e.message, '专用 Chrome 未启动：让 Claude 自动执行 start-tiktok-chrome.bat 后重试');
+    fail(handle, 'CHROME_NOT_REACHABLE', e.message, '专用 Chrome 未启动：让 AI 助手按 SKILL.md 第 2 步自动拉起 start-tiktok-chrome.bat 后重试');
   }
 
   // 2. Connect WebSocket
@@ -213,25 +223,29 @@ async function main() {
       'msToken 可能已过期：让用户在专用 Chrome 里刷新任意达人主页后重跑；若该主页需登录也先登录');
   }
 
-  // 8. Map to lean video records
-  const videos = unique.slice(0, requestedCount).map((it, idx) => ({
-    rank: idx + 1,
-    id: String(it.id),
-    url: `https://www.tiktok.com/@${profileStats.uniqueId || handle}/video/${it.id}`,
-    publishedAt: it.createTime ? new Date(parseInt(it.createTime) * 1000 + 8 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ') : null,
-    createTime: it.createTime != null ? String(it.createTime) : null,
-    durationSec: (it.video && it.video.duration) || null,
-    hashtags: Array.from(new Set((it.textExtra || []).map(h => h.hashtagName).filter(Boolean))),
-    musicTitle: (it.music && it.music.title) || null,
-    commerceHint: !!(it.isAd || it.commerceInfo),
-    playCount: it.stats && it.stats.playCount,
-    likeCount: it.stats && it.stats.diggCount,
-    shareCount: it.stats && it.stats.shareCount,
-    commentCount: it.stats && it.stats.commentCount,
-    collectCount: it.stats && it.stats.collectCount,
-    isPinned: !!it.isPinnedItem,
-    desc: (it.desc || '').slice(0, 120)
-  }));
+  // 8. Map to lean video records. stats fields are explicit-null (never
+  //    undefined) so JSON always carries the key, matching schema.md.
+  const videos = unique.slice(0, requestedCount).map((it, idx) => {
+    const st = it.stats || {};
+    return {
+      rank: idx + 1,
+      id: String(it.id),
+      url: `https://www.tiktok.com/@${profileStats.uniqueId || handle}/video/${it.id}`,
+      publishedAt: it.createTime ? new Date(parseInt(it.createTime) * 1000 + 8 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ') : null,
+      createTime: it.createTime != null ? String(it.createTime) : null,
+      durationSec: (it.video && it.video.duration) || null,
+      hashtags: Array.from(new Set((it.textExtra || []).map(h => h.hashtagName).filter(Boolean))),
+      musicTitle: (it.music && it.music.title) || null,
+      commerceHint: !!(it.isAd || it.commerceInfo),
+      playCount: st.playCount ?? null,
+      likeCount: st.diggCount ?? null,
+      shareCount: st.shareCount ?? null,
+      commentCount: st.commentCount ?? null,
+      collectCount: st.collectCount ?? null,
+      isPinned: !!it.isPinnedItem,
+      desc: (it.desc || '').slice(0, 120)
+    };
+  });
 
   // 9. Close tab and emit v2 payload
   await send('Target.closeTarget', { targetId: tid }).catch(() => {});
@@ -260,7 +274,19 @@ async function main() {
     warningCode: unique.length < requestedCount ? `PARTIAL_COUNT(got:${unique.length},wanted:${requestedCount})` : null,
     videos
   };
-  process.stdout.write(JSON.stringify(result, null, 2));
+  const payload = JSON.stringify(result, null, 2);
+  if (outPath) {
+    try {
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      fs.writeFileSync(outPath, payload);
+      process.stdout.write(JSON.stringify({ ok: true, archive: outPath, videos: videos.length, warningCode: result.warningCode }, null, 2));
+    } catch (e) {
+      console.error(`[warn] --out write failed (${e.message}); falling back to stdout payload`);
+      process.stdout.write(payload);
+    }
+  } else {
+    process.stdout.write(payload);
+  }
   setTimeout(() => process.exit(0), 200);
 }
 

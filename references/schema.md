@@ -24,6 +24,17 @@
 | `warningCode` | string \| null | `PARTIAL_COUNT(got:X,wanted:Y)` 表示实有条数少于请求条数；非失败，见 SKILL.md 处理规则 |
 | `videos` | array | 视频记录，**成功输出的判据就是本字段存在**（错误对象没有它） |
 
+### `--out` 直写模式（v2.1 新增）
+
+`scan.js <handle> [count] --out <archive-path>` 时的行为差异：
+
+| 场景 | 档案文件 | stdout |
+|---|---|---|
+| 成功 | 完整 v2 JSON（父目录自动创建） | `{"ok":true,"archive":<路径>,"videos":N,"warningCode":null}` 小标记 |
+| 失败 | **不产生任何文件** | 常规错误对象（`error` 字段） |
+
+`--out` 写入失败（磁盘/权限）时回退为 stdout 输出完整 payload 并在 stderr 告警。不带 `--out` 则保持旧行为：完整 JSON 走 stdout，由调用方自行落盘。
+
 ## videos[] 每条字段
 
 | 字段 | 类型 | 说明 |
@@ -37,7 +48,7 @@
 | `hashtags` | string[] | 已去重，取自 `textExtra[].hashtagName` |
 | `musicTitle` | string \| null | 背景音乐名 |
 | `commerceHint` | boolean | `isAd || commerceInfo` 任一为真即 true。**语义是"疑似带货"，接口信号而非精确事实** |
-| `playCount` / `likeCount` / `commentCount` / `shareCount` / `collectCount` | number | `stats.*`；`likeCount` 对应接口的 `diggCount` |
+| `playCount` / `likeCount` / `commentCount` / `shareCount` / `collectCount` | number \| null | `stats.*`；`likeCount` 对应接口的 `diggCount`。v2.1 起缺失时显式 `null`（不再静默丢键） |
 | `isPinned` | boolean | 接口 `isPinnedItem` 字段，独立于 rank 排序单独标记 |
 | `desc` | string | 视频文案，源数据截断到 120 字符 |
 

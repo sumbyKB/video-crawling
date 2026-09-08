@@ -10,8 +10,8 @@ SKILL.md 的「失败处理」表是行动索引；本文是每一条的**原理
 ### `CHROME_NOT_REACHABLE`（9223 不通）
 专用 Chrome 没启动或已退出。按 SKILL.md 第 2 步走自动拉起；连拉 6 次（约 30 秒）都失败再让用户手动双击 `start-tiktok-chrome.bat`。
 
-### `CREATE_TARGET_FAILED`（端口通但开不了 tab）
-通常上一个会话留下了僵尸 Chrome 窗口或 tab 数量异常。让用户**手动关掉那个专用 Chrome 窗口**，重跑——端口探测会变 DOWN，自动拉起流程会接手。
+### `CREATE_TARGET_FAILED`（端口通但开不了 tab / attach 失败）
+v2.1 起 `Target.attachToTarget` 失败（返回无 sessionId）也归入此码，detail 会写明 `attachToTarget returned no sessionId`。通常上一个会话留下了僵尸 Chrome 窗口或 tab 数量异常。让用户**手动关掉那个专用 Chrome 窗口**，重跑——端口探测会变 DOWN，自动拉起流程会接手。
 
 ### `NAV_FAILED_OR_CAPTCHA`（页面加载不出 / 滑块验证码）
 scan.js 会导航重试 3 次、每次轮询页面状态；检测到「Drag the slider」等验证码文案即停止（**本 skill 不绕过验证码**）。
@@ -25,8 +25,9 @@ scan.js 会导航重试 3 次、每次轮询页面状态；检测到「Drag the 
 ### `FATAL`
 其它未归类异常，看 `detail` 字段。重试 1 次；仍失败把 detail 原样报给用户。
 
-### `warningCode: PARTIAL_COUNT(got:X,wanted:Y)`（不是失败）
+### warningCode `PARTIAL_COUNT(got:X,wanted:Y)`（不是失败）
 达人在 Period 内只有 X 条，或滚动未触发更多分页。照常输出 X 条并注明原因；缺口 >30% 时重跑 1 次，两次一致就如实展示。
+注意：compare.js v2.1 起「样本 N 条」按**实有视频数**（videos.length）计算，与该 warning 口径一致。
 
 ### 熔断规则
 同一个 handle **连续两次同码失败**就停下来问人，不要循环重试空转。

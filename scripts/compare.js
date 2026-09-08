@@ -52,8 +52,9 @@ function main() {
   const L = [];
   L.push(`### 与上次扫描相比`);
   L.push('');
-  L.push(`上次：**${(older.capturedAt || '?').slice(0, 16).replace('T', ' ')}**（样本 ${older.requestedCount} 条） → 本次：**${(newer.capturedAt || '?').slice(0, 16).replace('T', ' ')}**（样本 ${newer.requestedCount} 条）`);
-  if (older.requestedCount !== newer.requestedCount) {
+  // Sample size = actual video count, not requestedCount (PARTIAL_COUNT-safe)
+  L.push(`上次：**${(older.capturedAt || '?').slice(0, 16).replace('T', ' ')}**（样本 ${older.videos.length} 条） → 本次：**${(newer.capturedAt || '?').slice(0, 16).replace('T', ' ')}**（样本 ${newer.videos.length} 条）`);
+  if (older.videos.length !== newer.videos.length) {
     L.push('');
     L.push(`> ⚠️ 两次取样条数不同，逐条对齐仍有意义，但总量对比仅作参考。`);
   }
@@ -73,32 +74,38 @@ function main() {
   L.push('');
   L.push('| # | 视频链接 | 发布时间 | 播放量 | Δ播放 | 点赞 | Δ点赞 | 备注 |');
   L.push('|---:|---|---|---:|---:|---:|---:|---|');
-  for (const v of newer.videos) {
+  for (const [idx, v] of newer.videos.entries()) {
     const p = prevById.get(v.id);
     const dp = delta(v.playCount, p && p.playCount);
     const dl = delta(v.likeCount, p && p.likeCount);
     const notes = [];
     if (!p) notes.push('🆕');
     if (v.isPinned) notes.push('📌');
-    L.push(`| ${v.rank} | [${v.id.slice(-6)}](${v.url}) | ${(v.publishedAt || '').slice(5, 16)} | ${fmt(v.playCount)} | ${p ? fmtDelta(dp) : '—'} | ${fmt(v.likeCount)} | ${p ? fmtDelta(dl) : '—'} | ${notes.join(' ') || '—'} |`);
+    L.push(`| ${v.rank || idx + 1} | [${v.id.slice(-6)}](${v.url}) | ${(v.publishedAt || '').slice(5, 16)} | ${fmt(v.playCount)} | ${p ? fmtDelta(dp) : '—'} | ${fmt(v.likeCount)} | ${p ? fmtDelta(dl) : '—'} | ${notes.join(' ') || '—'} |`);
   }
 
-  // videos present last time but gone now
+  // videos present last time but gone now (compare against actual sample, not requested count)
   const gone = older.videos.filter(v => !newIds.has(v.id));
   if (gone.length) {
     L.push('');
-    L.push(`⚠️ **上次有、本次前 ${newer.requestedCount} 条里不见了的视频**（可能被删、被移出置顶，或滑出取样窗口）：`);
+    L.push(`⚠️ **上次有、本次前 ${newer.videos.length} 条里不见了的视频**（可能被删、被移出置顶，或滑出取样窗口）：`);
     for (const g of gone) {
       L.push(`- [${g.id}](${g.url}) 上次播放 ${fmt(g.playCount)}${g.isPinned ? '（原为置顶）' : ''} ｜ ${(g.desc || '').slice(0, 30)}`);
     }
   }
 
-  // totals
+  // totals — show — instead of 0→0 when a metric is absent on both sides
   const sum = (arr, k) => arr.reduce((s, v) => s + (Number.isFinite(v[k]) ? v[k] : 0), 0);
+  const hasAny = (arr, k) => arr.some(v => Number.isFinite(v[k]));
   const keys = ['playCount', 'likeCount', 'commentCount', 'shareCount', 'collectCount'];
+  const label = { playCount: '播放', likeCount: '点赞', commentCount: '评论', shareCount: '分享', collectCount: '收藏' };
+  const parts = [];
+  for (const k of keys) {
+    if (!hasAny(older.videos, k) && !hasAny(newer.videos, k)) continue;
+    parts.push(`${label[k]} ${fmt(sum(older.videos, k))} → ${fmt(sum(newer.videos, k))}`);
+  }
   L.push('');
-  L.push(`**总量对比**：` + keys.map(k => ({ playCount: '播放', likeCount: '点赞', commentCount: '评论', shareCount: '分享', collectCount: '收藏' }[k]) +
-    ` ${fmt(sum(older.videos, k))} → ${fmt(sum(newer.videos, k))}`).join(' ｜ '));
+  L.push(`**总量对比**：` + (parts.length ? parts.join(' ｜ ') : '（两侧均无数值型指标）'));
 
   process.stdout.write(L.join('\n') + '\n');
 }
