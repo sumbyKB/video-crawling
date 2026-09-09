@@ -177,4 +177,6 @@ warningCode `PARTIAL_COUNT(got:X,wanted:Y)` 不是失败：照常输出实有的
 
 ## 更新日志
 
+- **2026-09-08 v2.2**：修复 `scan.js` 两处实测 bug——① 顶层缺少 `const fs = require('fs'); const path = require('path');`，导致 `--out` 归档必定失败回退 stdout（现已在 6 达人批量任务实测修复）；② handle 校验 v2.1 收紧过度，把 TikTok 合法的下划线结尾 handle（如 `ruffiedufie_`）误判为 INVALID_HANDLE，已放开 `_` 结尾（`.` 仍拒绝）。
+
 - **2026-09-08 v2.1**：`scan.js` 新增 `--out` 直写档案模式（沙箱友好，不依赖 /tmp 与 mkdir，失败不落半截档案）；stats 五项指标改为显式 null（不再静默丢键）；handle 校验收紧（末尾不能是 `.`/`_`）；`attachToTarget` 失败显式报错；`compare.js` 样本数口径改为实有条数（PARTIAL_COUNT 安全）、总量对比跳过两侧皆缺失的指标、rank 缺失时兜底序号。
